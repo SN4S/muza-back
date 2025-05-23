@@ -26,10 +26,15 @@ class User(Base):
     username = Column(String, unique=True, index=True)
     hashed_password = Column(String)
     is_active = Column(Boolean, default=True)
+    is_artist = Column(Boolean, default=False)
+    bio = Column(Text, nullable=True)
+    image = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     
     playlists = relationship("Playlist", back_populates="owner")
     liked_songs = relationship("Song", secondary="user_liked_songs", back_populates="liked_by")
+    songs = relationship("Song", back_populates="creator")
+    albums = relationship("Album", back_populates="creator")
 
 class Song(Base):
     __tablename__ = "songs"
@@ -41,10 +46,10 @@ class Song(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     
     album_id = Column(Integer, ForeignKey("albums.id"))
-    artist_id = Column(Integer, ForeignKey("artists.id"))
+    creator_id = Column(Integer, ForeignKey("users.id"))
     
     album = relationship("Album", back_populates="songs")
-    artist = relationship("Artist", back_populates="songs")
+    creator = relationship("User", back_populates="songs")
     playlists = relationship("Playlist", secondary=song_playlist, back_populates="songs")
     genres = relationship("Genre", secondary=song_genre, back_populates="songs")
     liked_by = relationship("User", secondary="user_liked_songs", back_populates="liked_songs")
@@ -71,22 +76,10 @@ class Album(Base):
     cover_image = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     
-    artist_id = Column(Integer, ForeignKey("artists.id"))
+    creator_id = Column(Integer, ForeignKey("users.id"))
     
-    artist = relationship("Artist", back_populates="albums")
+    creator = relationship("User", back_populates="albums")
     songs = relationship("Song", back_populates="album")
-
-class Artist(Base):
-    __tablename__ = "artists"
-
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, index=True)
-    bio = Column(Text, nullable=True)
-    image = Column(String, nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    
-    songs = relationship("Song", back_populates="artist")
-    albums = relationship("Album", back_populates="artist")
 
 class Genre(Base):
     __tablename__ = "genres"

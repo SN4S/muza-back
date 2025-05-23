@@ -15,12 +15,13 @@ def create_album(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth.get_current_active_user)
 ):
-    # Verify artist exists
-    artist = db.query(models.Artist).filter(models.Artist.id == album.artist_id).first()
-    if not artist:
-        raise HTTPException(status_code=404, detail="Artist not found")
+    if not current_user.is_artist:
+        raise HTTPException(
+            status_code=403,
+            detail="Only artists can create albums"
+        )
     
-    db_album = models.Album(**album.dict())
+    db_album = models.Album(**album.dict(), creator_id=current_user.id)
     db.add(db_album)
     db.commit()
     db.refresh(db_album)
@@ -56,10 +57,8 @@ def update_album(
     if db_album is None:
         raise HTTPException(status_code=404, detail="Album not found")
     
-    # Verify artist exists
-    artist = db.query(models.Artist).filter(models.Artist.id == album.artist_id).first()
-    if not artist:
-        raise HTTPException(status_code=404, detail="Artist not found")
+    if db_album.creator_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to update this album")
     
     for key, value in album.dict().items():
         setattr(db_album, key, value)
@@ -78,23 +77,26 @@ def delete_album(
     if db_album is None:
         raise HTTPException(status_code=404, detail="Album not found")
     
+    if db_album.creator_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to delete this album")
+    
     db.delete(db_album)
     db.commit()
     return {"message": "Album deleted successfully"}
 
-@router.get("/artist/{artist_id}", response_model=List[schemas.Album])
-def get_artist_albums(
-    artist_id: int,
+@router.get("/user/{user_id}", response_model=List[schemas.Album])
+def get_user_albums(
+    user_id: int,
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db)
 ):
-    # Verify artist exists
-    artist = db.query(models.Artist).filter(models.Artist.id == artist_id).first()
-    if not artist:
-        raise HTTPException(status_code=404, detail="Artist not found")
+    # Verify user exists
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
     
     albums = db.query(models.Album).filter(
-        models.Album.artist_id == artist_id
+        models.Album.creator_id == user_id
     ).offset(skip).limit(limit).all()
     return albums 

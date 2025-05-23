@@ -15,7 +15,16 @@ def create_song(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth.get_current_active_user)
 ):
-    db_song = models.Song(**song.dict(exclude={'genre_ids'}))
+    if not current_user.is_artist:
+        raise HTTPException(
+            status_code=403,
+            detail="Only artists can create songs"
+        )
+    
+    db_song = models.Song(
+        **song.dict(exclude={'genre_ids'}),
+        creator_id=current_user.id
+    )
     db.add(db_song)
     db.commit()
     db.refresh(db_song)
@@ -60,6 +69,9 @@ def update_song(
     if db_song is None:
         raise HTTPException(status_code=404, detail="Song not found")
     
+    if db_song.creator_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to update this song")
+    
     for key, value in song.dict(exclude={'genre_ids'}).items():
         setattr(db_song, key, value)
     
@@ -83,6 +95,9 @@ def delete_song(
     db_song = db.query(models.Song).filter(models.Song.id == song_id).first()
     if db_song is None:
         raise HTTPException(status_code=404, detail="Song not found")
+    
+    if db_song.creator_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to delete this song")
     
     db.delete(db_song)
     db.commit()

@@ -26,15 +26,15 @@ def search_songs(
     ).offset(skip).limit(limit).all()
     return songs
 
-@router.get("/artists", response_model=List[schemas.Artist])
+@router.get("/artists", response_model=List[schemas.User])
 def search_artists(
     query: str = Query(..., min_length=1),
     skip: int = 0,
     limit: int = 20,
     db: Session = Depends(get_db)
 ):
-    artists = db.query(models.Artist).filter(
-        models.Artist.name.ilike(f"%{query}%")
+    artists = db.query(models.User).filter(
+        models.User.username.ilike(f"%{query}%")
     ).offset(skip).limit(limit).all()
     return artists
 

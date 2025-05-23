@@ -6,6 +6,9 @@ from datetime import datetime
 class UserBase(BaseModel):
     email: EmailStr
     username: str
+    bio: Optional[str] = None
+    image: Optional[str] = None
+    is_artist: bool = False
 
 class UserCreate(UserBase):
     password: str
@@ -14,6 +17,8 @@ class User(UserBase):
     id: int
     is_active: bool
     created_at: datetime
+    songs: List['Song'] = []
+    albums: List['Album'] = []
 
     class Config:
         from_attributes = True
@@ -26,14 +31,14 @@ class SongBase(BaseModel):
 
 class SongCreate(SongBase):
     album_id: Optional[int] = None
-    artist_id: int
     genre_ids: List[int]
 
 class Song(SongBase):
     id: int
     created_at: datetime
     album_id: Optional[int]
-    artist_id: int
+    creator_id: int
+    creator: User
 
     class Config:
         from_attributes = True
@@ -62,31 +67,14 @@ class AlbumBase(BaseModel):
     cover_image: Optional[str] = None
 
 class AlbumCreate(AlbumBase):
-    artist_id: int
+    pass
 
 class Album(AlbumBase):
     id: int
-    artist_id: int
+    creator_id: int
     created_at: datetime
     songs: List[Song] = []
-
-    class Config:
-        from_attributes = True
-
-# Artist schemas
-class ArtistBase(BaseModel):
-    name: str
-    bio: Optional[str] = None
-    image: Optional[str] = None
-
-class ArtistCreate(ArtistBase):
-    pass
-
-class Artist(ArtistBase):
-    id: int
-    created_at: datetime
-    songs: List[Song] = []
-    albums: List[Album] = []
+    creator: User
 
     class Config:
         from_attributes = True
