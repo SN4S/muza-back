@@ -13,12 +13,43 @@ class UserBase(BaseModel):
 class UserCreate(UserBase):
     password: str
 
+# Nested schemas to avoid circular references
+class UserNested(BaseModel):
+    id: int
+    username: str
+    bio: Optional[str] = None
+    image: Optional[str] = None
+    is_artist: bool
+
+    class Config:
+        from_attributes = True
+
+class SongNested(BaseModel):
+    id: int
+    title: str
+    duration: int
+    file_path: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class AlbumNested(BaseModel):
+    id: int
+    title: str
+    release_date: datetime
+    cover_image: Optional[str] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
 class User(UserBase):
     id: int
     is_active: bool
     created_at: datetime
-    songs: List['Song'] = []
-    albums: List['Album'] = []
+    songs: List[SongNested] = []
+    albums: List[AlbumNested] = []
 
     class Config:
         from_attributes = True
@@ -38,7 +69,7 @@ class Song(SongBase):
     created_at: datetime
     album_id: Optional[int]
     creator_id: int
-    creator: User
+    creator: UserNested
 
     class Config:
         from_attributes = True
@@ -55,7 +86,7 @@ class Playlist(PlaylistBase):
     id: int
     owner_id: int
     created_at: datetime
-    songs: List[Song] = []
+    songs: List[SongNested] = []
 
     class Config:
         from_attributes = True
@@ -73,8 +104,8 @@ class Album(AlbumBase):
     id: int
     creator_id: int
     created_at: datetime
-    songs: List[Song] = []
-    creator: User
+    songs: List[SongNested] = []
+    creator: UserNested
 
     class Config:
         from_attributes = True
@@ -89,7 +120,7 @@ class GenreCreate(GenreBase):
 
 class Genre(GenreBase):
     id: int
-    songs: List[Song] = []
+    songs: List[SongNested] = []
 
     class Config:
         from_attributes = True
