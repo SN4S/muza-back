@@ -20,7 +20,7 @@ def search_songs(
     songs = db.query(models.Song).filter(
         or_(
             models.Song.title.ilike(f"%{query}%"),
-            models.Song.artist.has(models.Artist.name.ilike(f"%{query}%")),
+            models.Song.creator.has(models.User.username.ilike(f"%{query}%")),
             models.Song.album.has(models.Album.title.ilike(f"%{query}%"))
         )
     ).offset(skip).limit(limit).all()
@@ -48,7 +48,7 @@ def search_albums(
     albums = db.query(models.Album).filter(
         or_(
             models.Album.title.ilike(f"%{query}%"),
-            models.Album.artist.has(models.Artist.name.ilike(f"%{query}%"))
+            models.Album.creator.has(models.User.username.ilike(f"%{query}%"))
         )
     ).offset(skip).limit(limit).all()
     return albums
