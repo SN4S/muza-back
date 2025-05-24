@@ -84,6 +84,85 @@ def delete_album(
     db.commit()
     return {"message": "Album deleted successfully"}
 
+@router.get("/{album_id}/songs", response_model=List[schemas.Song])
+def get_album_songs(
+    album_id: int,
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(get_db)
+):
+    """Get all songs in an album"""
+    album = db.query(models.Album).filter(models.Album.id == album_id).first()
+    if album is None:
+        raise HTTPException(status_code=404, detail="Album not found")
+    
+    songs = db.query(models.Song).filter(
+        models.Song.album_id == album_id
+    ).offset(skip).limit(limit).all()
+    return songs
+
+@router.post("/{album_id}/songs/{song_id}")
+def add_song_to_album(
+    album_id: int,
+    song_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_active_user)
+):
+    """Add a song to an album"""
+    # Check if album exists and user is the creator
+    album = db.query(models.Album).filter(models.Album.id == album_id).first()
+    if album is None:
+        raise HTTPException(status_code=404, detail="Album not found")
+    
+    if album.creator_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to modify this album")
+    
+    # Check if song exists and user is the creator
+    song = db.query(models.Song).filter(models.Song.id == song_id).first()
+    if song is None:
+        raise HTTPException(status_code=404, detail="Song not found")
+    
+    if song.creator_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to add this song to the album")
+    
+    # Check if song is already in the album
+    if song.album_id == album_id:
+        raise HTTPException(status_code=400, detail="Song is already in this album")
+    
+    # Add song to album
+    song.album_id = album_id
+    db.commit()
+    return {"message": "Song added to album successfully"}
+
+@router.delete("/{album_id}/songs/{song_id}")
+def remove_song_from_album(
+    album_id: int,
+    song_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_active_user)
+):
+    """Remove a song from an album"""
+    # Check if album exists and user is the creator
+    album = db.query(models.Album).filter(models.Album.id == album_id).first()
+    if album is None:
+        raise HTTPException(status_code=404, detail="Album not found")
+    
+    if album.creator_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to modify this album")
+    
+    # Check if song exists and is in the album
+    song = db.query(models.Song).filter(
+        models.Song.id == song_id,
+        models.Song.album_id == album_id
+    ).first()
+    if song is None:
+        raise HTTPException(status_code=404, detail="Song not found in this album")
+    
+    # Remove song from album
+    song.album_id = None
+    db.commit()
+    return {"message": "Song removed from album successfully"}
+
 @router.get("/user/{user_id}", response_model=List[schemas.Album])
 def get_user_albums(
     user_id: int,
