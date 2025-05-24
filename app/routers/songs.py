@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Response
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
 import os
@@ -15,6 +16,8 @@ router = APIRouter(
 
 UPLOAD_DIR = "uploads/songs"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+CHUNK_SIZE = 1024 * 1024  # 1MB chunks
 
 async def save_upload_file(upload_file: UploadFile) -> tuple[str, int]:
     """Save uploaded file and return file path and duration"""
@@ -33,6 +36,19 @@ async def save_upload_file(upload_file: UploadFile) -> tuple[str, int]:
     duration = int(audio.info.length) if audio else 0
     
     return file_path, duration
+
+async def stream_file(file_path: str, start: int = 0, end: Optional[int] = None):
+    """Stream file in chunks"""
+    async with aiofiles.open(file_path, 'rb') as file:
+        await file.seek(start)
+        while True:
+            if end is not None and start >= end:
+                break
+            chunk = await file.read(min(CHUNK_SIZE, end - start if end is not None else CHUNK_SIZE))
+            if not chunk:
+                break
+            start += len(chunk)
+            yield chunk
 
 @router.post("/", response_model=schemas.Song)
 async def create_song(
@@ -174,4 +190,88 @@ def delete_song(
     
     db.delete(db_song)
     db.commit()
-    return {"message": "Song deleted successfully"} 
+    return {"message": "Song deleted successfully"}
+
+@router.get("/{song_id}/stream")
+async def stream_song(
+    song_id: int,
+    range: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """Stream a song with support for range requests"""
+    song = db.query(models.Song).filter(models.Song.id == song_id).first()
+    if song is None:
+        raise HTTPException(status_code=404, detail="Song not found")
+    
+    if not os.path.exists(song.file_path):
+        raise HTTPException(status_code=404, detail="Song file not found")
+    
+    file_size = os.path.getsize(song.file_path)
+    start = 0
+    end = file_size - 1
+    
+    # Handle range request
+    if range:
+        try:
+            range_header = range.replace('bytes=', '').split('-')
+            start = int(range_header[0])
+            if range_header[1]:
+                end = int(range_header[1])
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid range header")
+    
+    # Get file extension for content type
+    file_ext = os.path.splitext(song.file_path)[1].lower()
+    content_type = {
+        '.mp3': 'audio/mpeg',
+        '.wav': 'audio/wav',
+        '.ogg': 'audio/ogg',
+        '.m4a': 'audio/mp4',
+        '.flac': 'audio/flac'
+    }.get(file_ext, 'audio/mpeg')
+    
+    # Create response headers
+    headers = {
+        'Accept-Ranges': 'bytes',
+        'Content-Type': content_type,
+        'Content-Length': str(end - start + 1),
+        'Content-Range': f'bytes {start}-{end}/{file_size}'
+    }
+    
+    return StreamingResponse(
+        stream_file(song.file_path, start, end + 1),
+        headers=headers,
+        media_type=content_type
+    )
+
+@router.get("/{song_id}/info")
+def get_song_info(
+    song_id: int,
+    db: Session = Depends(get_db)
+):
+    """Get song file information"""
+    song = db.query(models.Song).filter(models.Song.id == song_id).first()
+    if song is None:
+        raise HTTPException(status_code=404, detail="Song not found")
+    
+    if not os.path.exists(song.file_path):
+        raise HTTPException(status_code=404, detail="Song file not found")
+    
+    file_size = os.path.getsize(song.file_path)
+    file_ext = os.path.splitext(song.file_path)[1].lower()
+    content_type = {
+        '.mp3': 'audio/mpeg',
+        '.wav': 'audio/wav',
+        '.ogg': 'audio/ogg',
+        '.m4a': 'audio/mp4',
+        '.flac': 'audio/flac'
+    }.get(file_ext, 'audio/mpeg')
+    
+    return {
+        "id": song.id,
+        "title": song.title,
+        "duration": song.duration,
+        "file_size": file_size,
+        "content_type": content_type,
+        "file_path": song.file_path
+    } 
