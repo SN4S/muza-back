@@ -1,6 +1,7 @@
 from pydantic import BaseModel, EmailStr
 from typing import List, Optional
 from datetime import datetime
+from fastapi import UploadFile
 
 # User schemas
 class UserBase(BaseModel):
@@ -57,16 +58,19 @@ class User(UserBase):
 # Song schemas
 class SongBase(BaseModel):
     title: str
-    duration: int
-    file_path: str
+    duration: Optional[int] = None  # Will be calculated from the uploaded file
 
 class SongCreate(SongBase):
     album_id: Optional[int] = None
-    genre_ids: List[int]
+    genre_ids: Optional[List[int]] = []
+
+class SongUpload(SongCreate):
+    file: UploadFile
 
 class Song(SongBase):
     id: int
     created_at: datetime
+    file_path: str
     album_id: Optional[int]
     creator_id: int
     creator: UserNested

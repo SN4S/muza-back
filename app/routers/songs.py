@@ -1,6 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
+import os
+import aiofiles
+from datetime import datetime
+import mutagen
 from .. import models, schemas, auth
 from ..database import get_db
 
@@ -9,34 +13,74 @@ router = APIRouter(
     tags=["songs"]
 )
 
+UPLOAD_DIR = "uploads/songs"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+async def save_upload_file(upload_file: UploadFile) -> tuple[str, int]:
+    """Save uploaded file and return file path and duration"""
+    # Create unique filename
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"{timestamp}_{upload_file.filename}"
+    file_path = os.path.join(UPLOAD_DIR, filename)
+    
+    # Save file
+    async with aiofiles.open(file_path, 'wb') as out_file:
+        content = await upload_file.read()
+        await out_file.write(content)
+    
+    # Get duration using mutagen
+    audio = mutagen.File(file_path)
+    duration = int(audio.info.length) if audio else 0
+    
+    return file_path, duration
+
 @router.post("/", response_model=schemas.Song)
-def create_song(
-    song: schemas.SongCreate,
+async def create_song(
+    title: str = Form(...),
+    album_id: Optional[int] = Form(None),
+    genre_ids: Optional[List[int]] = Form([]),
+    file: UploadFile = File(...),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth.get_current_active_user)
 ):
+    """Create a new song with file upload"""
     if not current_user.is_artist:
         raise HTTPException(
             status_code=403,
             detail="Only artists can create songs"
         )
     
+    # Validate file type
+    if not file.content_type.startswith('audio/'):
+        raise HTTPException(
+            status_code=400,
+            detail="File must be an audio file"
+        )
+    
+    # Save file and get duration
+    file_path, duration = await save_upload_file(file)
+    
+    # Create song record
     db_song = models.Song(
-        **song.dict(exclude={'genre_ids'}),
+        title=title,
+        duration=duration,
+        file_path=file_path,
+        album_id=album_id,
         creator_id=current_user.id
     )
     db.add(db_song)
     db.commit()
     db.refresh(db_song)
     
-    # Add genres
-    for genre_id in song.genre_ids:
-        genre = db.query(models.Genre).filter(models.Genre.id == genre_id).first()
-        if genre:
-            db_song.genres.append(genre)
+    # Add genres if provided
+    if genre_ids:
+        for genre_id in genre_ids:
+            genre = db.query(models.Genre).filter(models.Genre.id == genre_id).first()
+            if genre:
+                db_song.genres.append(genre)
+        db.commit()
+        db.refresh(db_song)
     
-    db.commit()
-    db.refresh(db_song)
     return db_song
 
 @router.get("/", response_model=List[schemas.Song])
@@ -59,9 +103,12 @@ def get_song(
     return song
 
 @router.put("/{song_id}", response_model=schemas.Song)
-def update_song(
+async def update_song(
     song_id: int,
-    song: schemas.SongCreate,
+    title: Optional[str] = Form(None),
+    album_id: Optional[int] = Form(None),
+    genre_ids: Optional[List[int]] = Form(None),
+    file: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth.get_current_active_user)
 ):
@@ -72,15 +119,37 @@ def update_song(
     if db_song.creator_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized to update this song")
     
-    for key, value in song.dict(exclude={'genre_ids'}).items():
-        setattr(db_song, key, value)
+    # Update basic fields
+    if title is not None:
+        db_song.title = title
+    if album_id is not None:
+        db_song.album_id = album_id
     
-    # Update genres
-    db_song.genres = []
-    for genre_id in song.genre_ids:
-        genre = db.query(models.Genre).filter(models.Genre.id == genre_id).first()
-        if genre:
-            db_song.genres.append(genre)
+    # Handle file upload if provided
+    if file is not None:
+        if not file.content_type.startswith('audio/'):
+            raise HTTPException(
+                status_code=400,
+                detail="File must be an audio file"
+            )
+        
+        # Delete old file
+        if os.path.exists(db_song.file_path):
+            os.remove(db_song.file_path)
+        
+        # Save new file
+        file_path, duration = await save_upload_file(file)
+        db_song.file_path = file_path
+        db_song.duration = duration
+    
+    # Update genres if provided
+    if genre_ids is not None:
+        db_song.genres = []
+        if genre_ids:  # Only process if the list is not empty
+            for genre_id in genre_ids:
+                genre = db.query(models.Genre).filter(models.Genre.id == genre_id).first()
+                if genre:
+                    db_song.genres.append(genre)
     
     db.commit()
     db.refresh(db_song)
@@ -98,6 +167,10 @@ def delete_song(
     
     if db_song.creator_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized to delete this song")
+    
+    # Delete the file
+    if os.path.exists(db_song.file_path):
+        os.remove(db_song.file_path)
     
     db.delete(db_song)
     db.commit()
