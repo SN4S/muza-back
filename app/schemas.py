@@ -31,6 +31,7 @@ class SongNested(BaseModel):
     duration: int
     file_path: str
     created_at: datetime
+    creator: UserNested
 
     class Config:
         from_attributes = True

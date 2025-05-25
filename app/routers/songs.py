@@ -291,6 +291,7 @@ def like_song(
         raise HTTPException(status_code=400, detail="Song already liked")
 
     current_user.liked_songs.append(song)
+    song.like_count += 1  # Match the field name
     db.commit()
     return {"message": "Song liked successfully"}
 
@@ -309,6 +310,7 @@ def unlike_song(
         raise HTTPException(status_code=400, detail="Song not liked")
 
     current_user.liked_songs.remove(song)
+    song.like_count = max(0, song.like_count - 1)  # Match the field name
     db.commit()
     return {"message": "Song unliked successfully"}
 
