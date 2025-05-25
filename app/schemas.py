@@ -74,6 +74,7 @@ class Song(SongBase):
     album_id: Optional[int]
     creator_id: int
     creator: UserNested
+    like_count: int = 0
 
     class Config:
         from_attributes = True

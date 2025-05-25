@@ -274,4 +274,57 @@ def get_song_info(
         "file_size": file_size,
         "content_type": content_type,
         "file_path": song.file_path
-    } 
+    }
+
+
+@router.post("/{song_id}/like")
+def like_song(
+        song_id: int,
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(auth.get_current_active_user)
+):
+    song = db.query(models.Song).filter(models.Song.id == song_id).first()
+    if not song:
+        raise HTTPException(status_code=404, detail="Song not found")
+
+    if song in current_user.liked_songs:
+        raise HTTPException(status_code=400, detail="Song already liked")
+
+    current_user.liked_songs.append(song)
+    db.commit()
+    return {"message": "Song liked successfully"}
+
+
+@router.delete("/{song_id}/like")
+def unlike_song(
+        song_id: int,
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(auth.get_current_active_user)
+):
+    song = db.query(models.Song).filter(models.Song.id == song_id).first()
+    if not song:
+        raise HTTPException(status_code=404, detail="Song not found")
+
+    if song not in current_user.liked_songs:
+        raise HTTPException(status_code=400, detail="Song not liked")
+
+    current_user.liked_songs.remove(song)
+    db.commit()
+    return {"message": "Song unliked successfully"}
+
+@router.get("/{song_id}/is-liked")
+def check_if_song_liked(
+        song_id: int,
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(auth.get_current_active_user)
+):
+    song = db.query(models.Song).filter(models.Song.id == song_id).first()
+    if not song:
+        raise HTTPException(status_code=404, detail="Song not found")
+
+    is_liked = song in current_user.liked_songs
+    return {"is_liked": is_liked}
+
+def add_like_count(song):
+    song.like_count = len(song.liked_by)
+    return song
