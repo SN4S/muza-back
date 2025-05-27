@@ -32,6 +32,7 @@ class SongNested(BaseModel):
     file_path: str
     created_at: datetime
     creator: UserNested
+    like_count: int = 0
 
     class Config:
         from_attributes = True
