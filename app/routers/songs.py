@@ -327,6 +327,14 @@ def check_if_song_liked(
     is_liked = song in current_user.liked_songs
     return {"is_liked": is_liked}
 
+@router.post("/check-likes")
+def check_multiple_likes(
+    song_ids: List[int],
+    current_user: models.User = Depends(auth.get_current_active_user)
+):
+    liked_songs_ids = {song.id for song in current_user.liked_songs}
+    return {song_id: song_id in liked_songs_ids for song_id in song_ids}
+
 def add_like_count(song):
     song.like_count = len(song.liked_by)
     return song
