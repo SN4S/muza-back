@@ -5,7 +5,9 @@ from typing import List, Optional
 import os
 import aiofiles
 from datetime import datetime
-import mutagen
+import subprocess
+import json
+import asyncio
 from .. import models, schemas, auth
 from ..database import get_db
 
@@ -19,23 +21,77 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 CHUNK_SIZE = 1024 * 1024  # 1MB chunks
 
+
 async def save_upload_file(upload_file: UploadFile) -> tuple[str, int]:
     """Save uploaded file and return file path and duration"""
     # Create unique filename
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"{timestamp}_{upload_file.filename}"
     file_path = os.path.join(UPLOAD_DIR, filename)
-    
-    # Save file
-    async with aiofiles.open(file_path, 'wb') as out_file:
-        content = await upload_file.read()
-        await out_file.write(content)
-    
-    # Get duration using mutagen
-    audio = mutagen.File(file_path)
-    duration = int(audio.info.length) if audio else 0
-    
+
+    # Save file with proper buffering
+    try:
+        async with aiofiles.open(file_path, 'wb') as out_file:
+            # Read and write in chunks to avoid memory issues
+            await upload_file.seek(0)  # Reset file pointer
+            while chunk := await upload_file.read(8192):  # 8KB chunks
+                await out_file.write(chunk)
+
+        # Ensure file is fully written
+        await asyncio.sleep(0.2)
+
+        print(f"File saved: {file_path} ({os.path.getsize(file_path)} bytes)")
+
+    except Exception as e:
+        print(f"Error saving file: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to save file: {e}")
+
+    # Validate file exists and has content
+    if not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
+        raise HTTPException(status_code=500, detail="File was not saved correctly")
+
+    # Get duration with multiple fallback methods
+    duration = await try_ffprobe_duration(file_path)
+
+    if duration == 0:
+        print(f"Warning: Could not determine duration for {filename}")
+    else:
+        print(f"Duration: {duration} seconds for {filename}")
+
     return file_path, duration
+
+async def try_ffprobe_duration(file_path: str) -> int:
+    """Try to get duration using ffprobe"""
+    try:
+        cmd = [
+            'ffprobe', '-v', 'quiet', '-print_format', 'json',
+            '-show_format', file_path
+        ]
+
+        # Run in thread pool to avoid blocking
+        def run_ffprobe():
+            return subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+
+        result = await asyncio.get_event_loop().run_in_executor(None, run_ffprobe)
+
+        if result.returncode == 0:
+            data = json.loads(result.stdout)
+            duration_str = data.get('format', {}).get('duration')
+            if duration_str:
+                duration = int(float(duration_str))
+                print(f"ffprobe: {duration} seconds")
+                return duration
+        else:
+            print(f"ffprobe error: {result.stderr}")
+
+    except subprocess.TimeoutExpired:
+        print("ffprobe timed out")
+    except FileNotFoundError:
+        print("ffprobe not found - install ffmpeg")
+    except Exception as e:
+        print(f"ffprobe failed: {e}")
+
+    return 0
 
 async def stream_file(file_path: str, start: int = 0, end: Optional[int] = None):
     """Stream file in chunks"""
@@ -50,14 +106,51 @@ async def stream_file(file_path: str, start: int = 0, end: Optional[int] = None)
             start += len(chunk)
             yield chunk
 
+
+async def validate_audio_file(file_path: str) -> bool:
+    """Validate that the file is actually an audio file"""
+    try:
+        # Check file size
+        if os.path.getsize(file_path) < 1000:  # Less than 1KB is suspicious
+            print(f"File too small: {os.path.getsize(file_path)} bytes")
+            return False
+
+        # Try to read first few bytes to check for audio headers
+        with open(file_path, 'rb') as f:
+            header = f.read(16)
+
+            # Check for common audio file headers
+            audio_headers = [
+                b'ID3',  # MP3 with ID3
+                b'\xff\xfb',  # MP3
+                b'\xff\xfa',  # MP3
+                b'fLaC',  # FLAC
+                b'OggS',  # OGG
+                b'\x00\x00\x00\x20ftypM4A',  # M4A
+            ]
+
+            for audio_header in audio_headers:
+                if header.startswith(audio_header):
+                    print(f"Valid audio header found: {audio_header}")
+                    return True
+
+        print("No valid audio header found")
+        return False
+
+    except Exception as e:
+        print(f"File validation error: {e}")
+        return False
+
+
+# Update the create_song endpoint:
 @router.post("/", response_model=schemas.Song)
 async def create_song(
-    title: str = Form(...),
-    album_id: Optional[int] = Form(None),
-    genre_ids: Optional[List[int]] = Form([]),
-    file: UploadFile = File(...),
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_active_user)
+        title: str = Form(...),
+        album_id: Optional[int] = Form(None),
+        genre_ids: Optional[List[int]] = Form([]),
+        file: UploadFile = File(...),
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(auth.get_current_active_user)
 ):
     """Create a new song with file upload"""
     if not current_user.is_artist:
@@ -65,17 +158,34 @@ async def create_song(
             status_code=403,
             detail="Only artists can create songs"
         )
-    
-    # Validate file type
+
+    # Validate file type and size
     if not file.content_type.startswith('audio/'):
         raise HTTPException(
             status_code=400,
-            detail="File must be an audio file"
+            detail=f"File must be an audio file, got: {file.content_type}"
         )
-    
+
+    # Check file size (e.g., max 50MB)
+    if file.size and file.size > 50 * 1024 * 1024:
+        raise HTTPException(
+            status_code=400,
+            detail="File too large (max 50MB)"
+        )
+
+    print(f"Uploading: {file.filename} ({file.content_type}, {file.size} bytes)")
+
     # Save file and get duration
     file_path, duration = await save_upload_file(file)
-    
+
+    # Validate the saved file
+    if not await validate_audio_file(file_path):
+        os.remove(file_path)  # Clean up
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid audio file format"
+        )
+
     # Create song record
     db_song = models.Song(
         title=title,
@@ -87,7 +197,9 @@ async def create_song(
     db.add(db_song)
     db.commit()
     db.refresh(db_song)
-    
+
+    print(f"Song created: id={db_song.id}, duration={db_song.duration}")
+
     # Add genres if provided
     if genre_ids:
         for genre_id in genre_ids:
@@ -96,7 +208,7 @@ async def create_song(
                 db_song.genres.append(genre)
         db.commit()
         db.refresh(db_song)
-    
+
     return db_song
 
 @router.get("/", response_model=List[schemas.Song])
