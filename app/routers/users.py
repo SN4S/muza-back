@@ -168,4 +168,154 @@ def get_user_albums(
     albums = db.query(models.Album).filter(
         models.Album.creator_id == user_id
     ).offset(skip).limit(limit).all()
-    return albums 
+    return albums
+
+@router.post("/follow/{user_id}", response_model=schemas.FollowResponse)
+def follow_user(
+        user_id: int,
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(auth.get_current_active_user)
+):
+    if user_id == current_user.id:
+        raise HTTPException(status_code=400, detail="Cannot follow yourself")
+
+    target_user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not target_user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if target_user in current_user.following:
+        raise HTTPException(status_code=400, detail="Already following this user")
+
+    current_user.following.append(target_user)
+    db.commit()
+
+    return schemas.FollowResponse(
+        is_following=True,
+        follower_count=len(target_user.followers),
+        following_count=len(target_user.following)
+    )
+
+
+@router.delete("/follow/{user_id}", response_model=schemas.FollowResponse)
+def unfollow_user(
+        user_id: int,
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(auth.get_current_active_user)
+):
+    target_user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not target_user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if target_user not in current_user.following:
+        raise HTTPException(status_code=400, detail="Not following this user")
+
+    current_user.following.remove(target_user)
+    db.commit()
+
+    return schemas.FollowResponse(
+        is_following=False,
+        follower_count=len(target_user.followers),
+        following_count=len(target_user.following)
+    )
+
+@router.get("/follow/{user_id}/status", response_model=schemas.FollowResponse)
+def get_follow_status(
+        user_id: int,
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(auth.get_current_active_user)
+):
+    target_user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not target_user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    return schemas.FollowResponse(
+        is_following=target_user in current_user.following,
+        follower_count=len(target_user.followers),
+        following_count=len(target_user.following)
+    )
+
+@router.get("/{user_id}/profile", response_model=schemas.UserProfile)
+def get_user_profile(
+        user_id: int,
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(auth.get_current_active_user)
+):
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    song_count = db.query(models.Song).filter(models.Song.creator_id == user.id).count()
+
+    return schemas.UserProfile(
+        id=user.id,
+        username=user.username,
+        bio=user.bio,
+        image=user.image,
+        is_artist=user.is_artist,
+        follower_count=len(user.followers),
+        following_count=len(user.following),
+        song_count=song_count,
+        is_following=user in current_user.following
+    )
+
+
+@router.get("/following", response_model=List[schemas.UserProfile])
+def get_my_following(
+        skip: int = 0,
+        limit: int = 50,
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(auth.get_current_active_user)
+):
+    following_users = db.query(models.User).join(
+        models.user_follows,
+        models.User.id == models.user_follows.c.following_id
+    ).filter(
+        models.user_follows.c.follower_id == current_user.id
+    ).offset(skip).limit(limit).all()
+
+    result = []
+    for user in following_users:
+        song_count = db.query(models.Song).filter(models.Song.creator_id == user.id).count()
+        result.append(schemas.UserProfile(
+            id=user.id,
+            username=user.username,
+            bio=user.bio,
+            image=user.image,
+            is_artist=user.is_artist,
+            follower_count=len(user.followers),
+            following_count=len(user.following),
+            song_count=song_count,
+            is_following=True
+        ))
+    return result
+
+
+@router.get("/followers", response_model=List[schemas.UserProfile])
+def get_my_followers(
+        skip: int = 0,
+        limit: int = 50,
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(auth.get_current_active_user)
+):
+    followers = db.query(models.User).join(
+        models.user_follows,
+        models.User.id == models.user_follows.c.follower_id
+    ).filter(
+        models.user_follows.c.following_id == current_user.id
+    ).offset(skip).limit(limit).all()
+
+    result = []
+    for user in followers:
+        song_count = db.query(models.Song).filter(models.Song.creator_id == user.id).count()
+        result.append(schemas.UserProfile(
+            id=user.id,
+            username=user.username,
+            bio=user.bio,
+            image=user.image,
+            is_artist=user.is_artist,
+            follower_count=len(user.followers),
+            following_count=len(user.following),
+            song_count=song_count,
+            is_following=user in current_user.following
+        ))
+    return result

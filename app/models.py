@@ -18,6 +18,14 @@ song_genre = Table(
     Column('genre_id', Integer, ForeignKey('genres.id'))
 )
 
+user_follows = Table(
+    'user_follows',
+    Base.metadata,
+    Column('follower_id', Integer, ForeignKey('users.id'), primary_key=True),
+    Column('following_id', Integer, ForeignKey('users.id'), primary_key=True),
+    Column('created_at', DateTime(timezone=True), server_default=func.now())
+)
+
 class User(Base):
     __tablename__ = "users"
 
@@ -35,6 +43,21 @@ class User(Base):
     liked_songs = relationship("Song", secondary="user_liked_songs", back_populates="liked_by")
     songs = relationship("Song", back_populates="creator")
     albums = relationship("Album", back_populates="creator")
+    following = relationship(
+        "User",
+        secondary=user_follows,
+        primaryjoin=id == user_follows.c.follower_id,
+        secondaryjoin=id == user_follows.c.following_id,
+        back_populates="followers"
+    )
+
+    followers = relationship(
+        "User",
+        secondary=user_follows,
+        primaryjoin=id == user_follows.c.following_id,
+        secondaryjoin=id == user_follows.c.follower_id,
+        back_populates="following"
+    )
 
 class Song(Base):
     __tablename__ = "songs"

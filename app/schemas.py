@@ -3,6 +3,25 @@ from typing import List, Optional
 from datetime import datetime
 from fastapi import UploadFile
 
+class FollowResponse(BaseModel):
+    is_following: bool
+    follower_count: int
+    following_count: int
+
+class UserProfile(BaseModel):
+    id: int
+    username: str
+    bio: Optional[str] = None
+    image: Optional[str] = None
+    is_artist: bool
+    follower_count: int = 0
+    following_count: int = 0
+    song_count: int = 0
+    is_following: Optional[bool] = None  # Only set when viewed by another user
+
+    class Config:
+        from_attributes = True
+
 # User schemas
 class UserBase(BaseModel):
     email: EmailStr
