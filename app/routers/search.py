@@ -34,7 +34,8 @@ def search_artists(
     db: Session = Depends(get_db)
 ):
     artists = db.query(models.User).filter(
-        models.User.username.ilike(f"%{query}%")
+        models.User.username.ilike(f"%{query}%"),
+        models.User.is_artist == True,
     ).offset(skip).limit(limit).all()
     return artists
 
