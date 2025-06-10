@@ -335,6 +335,9 @@ def follow_user(
     if target_user in current_user.following:
         raise HTTPException(status_code=400, detail="Already following this user")
 
+    if user_id == current_user.id:
+        raise HTTPException(status_code=400, detail="Cannot follow yourself")
+
     current_user.following.append(target_user)
     db.commit()
 
