@@ -106,9 +106,11 @@ def get_album(
     return album
 
 @router.put("/{album_id}", response_model=schemas.Album)
-def update_album(
+async def update_album(
     album_id: int,
-    album: schemas.AlbumCreate,
+    title: Optional[str] = Form(None),
+    release_date: Optional[str] = Form(None),
+    cover: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth.get_current_active_user)
 ):
@@ -118,10 +120,35 @@ def update_album(
     
     if db_album.creator_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized to update this album")
-    
-    for key, value in album.dict().items():
-        setattr(db_album, key, value)
-    
+
+    if title:
+        db_album.title = title
+    if release_date:
+        try:
+            release_datetime = datetime.fromisoformat(release_date.replace('Z', '+00:00'))
+            db_album.release_date = release_datetime
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid date format. Use ISO format (YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS)"
+            )
+
+        # Update cover if provided
+    if cover and cover.filename:
+        if not cover.content_type.startswith('image/'):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cover must be an image file, got: {cover.content_type}"
+            )
+
+        old_cover_path = db_album.cover_image
+        cover_path = await save_image_file(cover, "album_covers")
+        db_album.cover_image = cover_path
+
+        # Remove old cover
+        if old_cover_path and os.path.exists(old_cover_path):
+            os.remove(old_cover_path)
+
     db.commit()
     db.refresh(db_album)
     return db_album

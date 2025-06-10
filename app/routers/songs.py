@@ -299,6 +299,7 @@ async def update_song(
     album_id: Optional[int] = Form(None),
     genre_ids: Optional[List[int]] = Form(None),
     file: Optional[UploadFile] = File(None),
+    cover: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth.get_current_active_user)
 ):
@@ -331,7 +332,16 @@ async def update_song(
         file_path, duration = await save_upload_file(file)
         db_song.file_path = file_path
         db_song.duration = duration
-    
+
+    if cover and cover.filename:
+        old_cover_path = db_song.cover_image
+        cover_path = await save_image_file(cover, "song_covers")
+        db_song.cover_image = cover_path
+
+        # Remove old cover
+        if old_cover_path and os.path.exists(old_cover_path):
+            os.remove(old_cover_path)
+
     # Update genres if provided
     if genre_ids is not None:
         db_song.genres = []
