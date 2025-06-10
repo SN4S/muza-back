@@ -49,6 +49,7 @@ class SongNested(BaseModel):
     title: str
     duration: int
     file_path: str
+    cover_image: Optional[str] = None
     created_at: datetime
     creator: UserNested
     like_count: int = 0
@@ -80,6 +81,7 @@ class User(UserBase):
 class SongBase(BaseModel):
     title: str
     duration: Optional[int] = None  # Will be calculated from the uploaded file
+    cover_image: Optional[str] = None
 
 class SongCreate(SongBase):
     album_id: Optional[int] = None

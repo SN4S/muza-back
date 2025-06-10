@@ -1,6 +1,13 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+import os
+from datetime import datetime
+
+from fastapi import APIRouter, Depends, HTTPException, status, Form, UploadFile, File
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
+
+from fastapi.responses import FileResponse
+
+from .songs import save_image_file
 from .. import models, schemas, auth
 from ..database import get_db
 
@@ -10,22 +17,74 @@ router = APIRouter(
 )
 
 @router.post("/", response_model=schemas.Album)
-def create_album(
-    album: schemas.AlbumCreate,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_active_user)
+async def create_album(
+        title: str = Form(...),
+        release_date: str = Form(...),
+        cover: Optional[UploadFile] = File(None),
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(auth.get_current_active_user)
 ):
+    """Create a new album with optional cover image"""
     if not current_user.is_artist:
         raise HTTPException(
             status_code=403,
             detail="Only artists can create albums"
         )
-    
-    db_album = models.Album(**album.dict(), creator_id=current_user.id)
+
+    # Validate cover if provided
+    cover_path = None
+    if cover and cover.filename:
+        if not cover.content_type.startswith('image/'):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cover must be an image file, got: {cover.content_type}"
+            )
+
+        if cover.size and cover.size > 5 * 1024 * 1024:
+            raise HTTPException(
+                status_code=400,
+                detail="Cover image too large (max 5MB)"
+            )
+
+        cover_path = await save_image_file(cover, "album_covers")
+
+    # Parse release date
+    try:
+        release_datetime = datetime.fromisoformat(release_date.replace('Z', '+00:00'))
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid date format. Use ISO format (YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS)"
+        )
+
+    # Create album
+    db_album = models.Album(
+        title=title,
+        release_date=release_datetime,
+        cover_image=cover_path,
+        creator_id=current_user.id
+    )
     db.add(db_album)
     db.commit()
     db.refresh(db_album)
     return db_album
+
+
+@router.get("/{album_id}/cover")
+async def get_album_cover(
+        album_id: int,
+        db: Session = Depends(get_db)
+):
+    """Get album cover image"""
+    album = db.query(models.Album).filter(models.Album.id == album_id).first()
+    if not album:
+        raise HTTPException(status_code=404, detail="Album not found")
+
+    if album.cover_image and os.path.exists(album.cover_image):
+        return FileResponse(album.cover_image)
+
+    # Return 404 if no cover - client will handle fallback
+    raise HTTPException(status_code=404, detail="Album cover not found")
 
 @router.get("/", response_model=List[schemas.Album])
 def get_albums(

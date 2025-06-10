@@ -1,5 +1,6 @@
+import uuid
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Response
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
 import os
@@ -7,6 +8,7 @@ import aiofiles
 from datetime import datetime
 import subprocess
 import json
+from PIL import Image
 import asyncio
 from .. import models, schemas, auth
 from ..database import get_db
@@ -20,6 +22,32 @@ UPLOAD_DIR = "uploads/songs"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 CHUNK_SIZE = 1024 * 1024  # 1MB chunks
+
+
+async def save_image_file(file: UploadFile, folder: str = "covers") -> str:
+    """Save uploaded image file"""
+    if not os.path.exists(f"uploads/{folder}"):
+        os.makedirs(f"uploads/{folder}")
+
+    file_extension = os.path.splitext(file.filename)[1]
+    filename = f"{uuid.uuid4()}{file_extension}"
+    file_path = f"uploads/{folder}/{filename}"
+
+    # Save and resize image
+    contents = await file.read()
+    with open(file_path, "wb") as f:
+        f.write(contents)
+
+    # Resize image to 300x300 for covers
+    try:
+        with Image.open(file_path) as img:
+            img = img.convert('RGB')  # Convert to RGB if needed
+            img = img.resize((300, 300), Image.Resampling.LANCZOS)
+            img.save(file_path, "JPEG", quality=85)
+    except Exception as e:
+        print(f"Image processing failed: {e}")
+
+    return file_path
 
 
 async def save_upload_file(upload_file: UploadFile) -> tuple[str, int]:
@@ -149,6 +177,7 @@ async def create_song(
         album_id: Optional[int] = Form(None),
         genre_ids: Optional[List[int]] = Form([]),
         file: UploadFile = File(...),
+        cover: Optional[UploadFile] = File(None),
         db: Session = Depends(get_db),
         current_user: models.User = Depends(auth.get_current_active_user)
 ):
@@ -166,11 +195,26 @@ async def create_song(
             detail=f"File must be an audio file, got: {file.content_type}"
         )
 
+    cover_path = None
+    if cover and cover.filename:
+        if not cover.content_type.startswith('image/'):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cover must be an image file, got: {cover.content_type}"
+            )
+        cover_path = await save_image_file(cover, "song_covers")
+
     # Check file size (e.g., max 50MB)
     if file.size and file.size > 50 * 1024 * 1024:
         raise HTTPException(
             status_code=400,
             detail="File too large (max 50MB)"
+        )
+
+    if cover and cover.size and cover.size > 5 * 1024 * 1024:
+        raise HTTPException(
+            status_code=400,
+            detail="Cover image too large (max 5MB)"
         )
 
     print(f"Uploading: {file.filename} ({file.content_type}, {file.size} bytes)")
@@ -191,6 +235,7 @@ async def create_song(
         title=title,
         duration=duration,
         file_path=file_path,
+        cover_image=cover_path,
         album_id=album_id,
         creator_id=current_user.id
     )
@@ -210,6 +255,23 @@ async def create_song(
         db.refresh(db_song)
 
     return db_song
+
+
+@router.get("/{song_id}/cover")
+async def get_song_cover(
+        song_id: int,
+        db: Session = Depends(get_db)
+):
+    """Get song cover image"""
+    song = db.query(models.Song).filter(models.Song.id == song_id).first()
+    if not song:
+        raise HTTPException(status_code=404, detail="Song not found")
+
+    if song.cover_image and os.path.exists(song.cover_image):
+        return FileResponse(song.cover_image)
+
+    # Return 404 if no cover - client will handle fallback
+    raise HTTPException(status_code=404, detail="Song cover not found")
 
 @router.get("/", response_model=List[schemas.Song])
 def get_songs(

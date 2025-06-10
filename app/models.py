@@ -66,6 +66,7 @@ class Song(Base):
     title = Column(String, index=True)
     duration = Column(Integer)  # Duration in seconds
     file_path = Column(String)
+    cover_image = Column(String, nullable=True)
     like_count = Column(Integer, default=0)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     
