@@ -270,6 +270,11 @@ async def get_song_cover(
     if song.cover_image and os.path.exists(song.cover_image):
         return FileResponse(song.cover_image)
 
+    if song.album_id:
+        album = db.query(models.Album).filter(models.Album.id == song.album_id).first()
+        if album and album.cover_image and os.path.exists(album.cover_image):
+            return FileResponse(album.cover_image)
+
     # Return 404 if no cover - client will handle fallback
     raise HTTPException(status_code=404, detail="Song cover not found")
 
