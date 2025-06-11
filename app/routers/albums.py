@@ -276,7 +276,7 @@ async def unlike_album(
     if not album:
         raise HTTPException(status_code=404, detail="Album not found")
 
-    current_user.liked_songs.remove(album)
+    current_user.liked_albums.remove(album)
     album.like_count = max(0, album.like_count - 1)  # Match the field name
     db.commit()
     return {"message": "Album unliked successfully"}
