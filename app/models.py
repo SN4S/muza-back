@@ -41,6 +41,7 @@ class User(Base):
     
     playlists = relationship("Playlist", back_populates="owner")
     liked_songs = relationship("Song", secondary="user_liked_songs", back_populates="liked_by")
+    liked_albums = relationship("Album", secondary="user_liked_albums", back_populates="liked_by")
     songs = relationship("Song", back_populates="creator")
     albums = relationship("Album", back_populates="creator")
     following = relationship(
@@ -100,11 +101,13 @@ class Album(Base):
     release_date = Column(DateTime(timezone=True))
     cover_image = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    
+    like_count = Column(Integer, default=0)
+
     creator_id = Column(Integer, ForeignKey("users.id"))
     
     creator = relationship("User", back_populates="albums")
     songs = relationship("Song", back_populates="album")
+    liked_by = relationship("User", secondary="user_liked_albums", back_populates="liked_albums")
 
 class Genre(Base):
     __tablename__ = "genres"
@@ -121,4 +124,11 @@ class UserLikedSongs(Base):
 
     user_id = Column(Integer, ForeignKey("users.id"), primary_key=True)
     song_id = Column(Integer, ForeignKey("songs.id"), primary_key=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now()) 
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+class UserLikedAlbums(Base):
+    __tablename__ = "user_liked_albums"
+
+    user_id = Column(Integer, ForeignKey("users.id"), primary_key=True)
+    album_id = Column(Integer, ForeignKey("albums.id"), primary_key=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

@@ -275,6 +275,14 @@ def get_current_user_liked_songs(
     songs = current_user.liked_songs[skip:skip + limit]
     return songs
 
+@router.get("/me/liked-albums", response_model=List[schemas.Album])
+async def get_current_user_liked_albums(
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_active_user)
+):
+    return current_user.liked_albums[skip:skip+limit]
 
 @router.get("/{user_id}", response_model=schemas.UserNested)
 def get_user(user_id: int, db: Session = Depends(get_db)):

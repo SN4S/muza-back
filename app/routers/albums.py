@@ -249,6 +249,38 @@ def remove_song_from_album(
     db.commit()
     return {"message": "Song removed from album successfully"}
 
+
+@router.post("/{album_id}/like")
+async def like_album(
+    album_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_user)
+):
+    album = db.query(models.Album).filter(models.Album.id == album_id).first()
+    if not album:
+        raise HTTPException(status_code=404, detail="Album not found")
+
+    current_user.liked_albums.append(album)
+    album.like_count += 1
+    db.commit()
+    return {"message": "Album liked successfully"}
+
+
+@router.delete("/{album_id}/like")
+async def unlike_album(
+        album_id: int,
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(auth.get_current_user)
+):
+    album = db.query(models.Album).filter(models.Album.id == album_id).first()
+    if not album:
+        raise HTTPException(status_code=404, detail="Album not found")
+
+    current_user.liked_songs.remove(album)
+    album.like_count = max(0, album.like_count - 1)  # Match the field name
+    db.commit()
+    return {"message": "Album unliked successfully"}
+
 @router.get("/user/{user_id}", response_model=List[schemas.Album])
 def get_user_albums(
     user_id: int,
