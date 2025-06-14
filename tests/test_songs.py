@@ -475,16 +475,15 @@ class TestSongEdgeCases:
             tmp.write(b'fake audio content')
             tmp.seek(0)
 
-            # Mock the file to report large size
-            with patch.object(type(tmp), 'size', new_callable=lambda: 60 * 1024 * 1024):  # 60MB
+            # Mock file size instead of using .size attribute
+            with patch('os.path.getsize', return_value=60 * 1024 * 1024):  # 60MB
                 response = client.post("/songs/",
                                        files={"file": ("large.mp3", tmp, "audio/mpeg")},
                                        data={"title": "Large Song"},
                                        headers=artist_auth_headers)
 
-        # Note: This test may not work exactly as expected due to TestClient limitations
-        # The actual file size check happens during file processing
-        # This is more of a demonstration of the test structure
+        # Expect 400 for file too large, not 200
+        assert response.status_code == 400
 
     def test_unauthorized_endpoints(self, client, auth_headers, test_song):
         """Test unauthorized access to various endpoints"""
