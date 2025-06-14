@@ -143,5 +143,8 @@ class TestAuthUtils:
         from app.auth import get_current_user
         from fastapi import HTTPException
 
-        with pytest.raises(HTTPException):
-            get_current_user("invalid_token", db_session)
+        with pytest.raises(HTTPException) as exc_info:
+            import asyncio
+            asyncio.run(get_current_user(token="invalid_token", db=db_session))
+
+        assert exc_info.value.status_code == 401

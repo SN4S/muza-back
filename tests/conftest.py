@@ -1,38 +1,229 @@
+# tests/conftest.py - FIXED VERSION
 import pytest
 import asyncio
-from httpx import AsyncClient
+import tempfile
+import os
+from datetime import datetime, timedelta
+from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
-from fastapi.testclient import TestClient
 
+# Import your app components
+from app.database import get_db, Base
 from main import app
-from app.database import Base, get_db
-from app.auth import get_current_user, get_current_active_user
-from app.models import User
+from app import models, auth, schemas
+from app.auth import get_password_hash, create_access_token
 
-# Test database URL - using SQLite for simplicity
-SQLALCHEMY_DATABASE_URL = "sqlite:///./test.db"
-
+# Test database setup with in-memory SQLite
+SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL,
     connect_args={"check_same_thread": False},
     poolclass=StaticPool,
+    echo=False  # Set to True for SQL debugging
 )
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
-def override_get_db():
+@pytest.fixture(scope="function")
+def db_session():
+    """Create a fresh database session for each test"""
+    # Create all tables
+    Base.metadata.create_all(bind=engine)
+
+    db = TestingSessionLocal()
     try:
-        db = TestingSessionLocal()
         yield db
     finally:
         db.close()
+        # Drop all tables after test
+        Base.metadata.drop_all(bind=engine)
 
 
-app.dependency_overrides[get_db] = override_get_db
+@pytest.fixture(scope="function")
+def client(db_session):
+    """Create a test client with overridden database dependency"""
+
+    def override_get_db():
+        try:
+            yield db_session
+        finally:
+            pass
+
+    app.dependency_overrides[get_db] = override_get_db
+
+    with TestClient(app) as test_client:
+        yield test_client
+
+    # Clean up
+    app.dependency_overrides.clear()
 
 
+@pytest.fixture
+def test_user(db_session):
+    """Create a test user"""
+    user_data = {
+        "username": "testuser",
+        "email": "test@example.com",
+        "hashed_password": get_password_hash("testpass123"),
+        "is_active": True,
+        "is_artist": False
+    }
+    user = models.User(**user_data)
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+    return user
+
+
+@pytest.fixture
+def test_artist(db_session):
+    """Create a test artist user"""
+    artist_data = {
+        "username": "testartist",
+        "email": "artist@example.com",
+        "hashed_password": get_password_hash("artistpass123"),
+        "is_active": True,
+        "is_artist": True
+    }
+    artist = models.User(**artist_data)
+    db_session.add(artist)
+    db_session.commit()
+    db_session.refresh(artist)
+    return artist
+
+
+@pytest.fixture
+def inactive_user(db_session):
+    """Create an inactive user"""
+    user_data = {
+        "username": "inactiveuser",
+        "email": "inactive@example.com",
+        "hashed_password": get_password_hash("pass123"),
+        "is_active": False,
+        "is_artist": False
+    }
+    user = models.User(**user_data)
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+    return user
+
+
+@pytest.fixture
+def auth_headers(test_user):
+    """Create auth headers for test user"""
+    access_token = create_access_token(
+        data={"sub": test_user.username},
+        expires_delta=timedelta(minutes=30)
+    )
+    return {"Authorization": f"Bearer {access_token}"}
+
+
+@pytest.fixture
+def artist_auth_headers(test_artist):
+    """Create auth headers for test artist"""
+    access_token = create_access_token(
+        data={"sub": test_artist.username},
+        expires_delta=timedelta(minutes=30)
+    )
+    return {"Authorization": f"Bearer {access_token}"}
+
+
+@pytest.fixture
+def test_genre(db_session):
+    """Create a test genre"""
+    genre = models.Genre(name="Rock", description="Rock music")
+    db_session.add(genre)
+    db_session.commit()
+    db_session.refresh(genre)
+    return genre
+
+
+@pytest.fixture
+def test_song(db_session, test_artist, test_genre):
+    """Create a test song"""
+    song = models.Song(
+        title="Test Song",
+        file_path="/test/path.mp3",
+        duration=180,
+        creator_id=test_artist.id,
+        like_count=0
+    )
+    db_session.add(song)
+    db_session.commit()
+
+    # Add genre relationship
+    song.genres.append(test_genre)
+    db_session.commit()
+    db_session.refresh(song)
+    return song
+
+
+@pytest.fixture
+def test_album(db_session, test_artist):
+    """Create a test album with proper creator relationship"""
+    album = models.Album(
+        title="Test Album",
+        release_date=datetime.now(),
+        creator_id=test_artist.id,
+        like_count=0
+    )
+    db_session.add(album)
+    db_session.commit()
+    db_session.refresh(album)
+    return album
+
+
+@pytest.fixture
+def test_playlist(db_session, test_user):
+    """Create a test playlist"""
+    playlist = models.Playlist(
+        name="Test Playlist",
+        description="Test Description",
+        owner_id=test_user.id
+    )
+    db_session.add(playlist)
+    db_session.commit()
+    db_session.refresh(playlist)
+    return playlist
+
+
+# Additional helper fixtures for file testing
+@pytest.fixture
+def temp_audio_file():
+    """Create a temporary audio file for testing"""
+    with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as tmp:
+        # Write some fake audio data
+        tmp.write(b'ID3\x03\x00\x00\x00' + b'fake_audio_data' * 100)
+        tmp.flush()
+        yield tmp.name
+
+    # Cleanup
+    try:
+        os.unlink(tmp.name)
+    except OSError:
+        pass
+
+
+@pytest.fixture
+def temp_image_file():
+    """Create a temporary image file for testing"""
+    with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
+        # Write some fake image data (JPEG header)
+        tmp.write(b'\xff\xd8\xff\xe0' + b'fake_image_data' * 100)
+        tmp.flush()
+        yield tmp.name
+
+    # Cleanup
+    try:
+        os.unlink(tmp.name)
+    except OSError:
+        pass
+
+
+# Async test support
 @pytest.fixture(scope="session")
 def event_loop():
     """Create an instance of the default event loop for the test session."""
@@ -41,86 +232,22 @@ def event_loop():
     loop.close()
 
 
-@pytest.fixture(scope="function")
-def db_session():
-    """Create a fresh database for each test."""
-    # Drop all tables first, then create them
-    Base.metadata.drop_all(bind=engine)
-    Base.metadata.create_all(bind=engine)
+# Mock upload directory
+@pytest.fixture(autouse=True)
+def mock_upload_dir():
+    """Create temporary upload directory for tests"""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        # Patch the upload directory in the songs module
+        import app.routers.songs as songs_module
+        original_upload_dir = songs_module.UPLOAD_DIR
+        songs_module.UPLOAD_DIR = temp_dir
 
-    db = TestingSessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-        # Clean up after test
-        Base.metadata.drop_all(bind=engine)
+        # Create subdirectories
+        os.makedirs(os.path.join(temp_dir, "songs"), exist_ok=True)
+        os.makedirs(os.path.join(temp_dir, "covers"), exist_ok=True)
+        os.makedirs(os.path.join(temp_dir, "song_covers"), exist_ok=True)
 
+        yield temp_dir
 
-@pytest.fixture
-def client():
-    """Test client for making requests."""
-    return TestClient(app)
-
-
-@pytest.fixture
-async def async_client():
-    """Async test client for async operations."""
-    async with AsyncClient(app=app, base_url="http://test") as ac:
-        yield ac
-
-
-@pytest.fixture
-def mock_user():
-    """Mock user for authentication tests."""
-    return User(
-        id=1,
-        email="test@example.com",
-        username="testuser",
-        is_active=True,
-        is_artist=False
-    )
-
-
-@pytest.fixture
-def authenticated_client(client, mock_user):
-    """Client with mocked authentication."""
-
-    def mock_get_current_user():
-        return mock_user
-
-    def mock_get_current_active_user():
-        return mock_user
-
-    app.dependency_overrides[get_current_user] = mock_get_current_user
-    app.dependency_overrides[get_current_active_user] = mock_get_current_active_user
-
-    yield client
-
-    # Cleanup
-    if get_current_user in app.dependency_overrides:
-        del app.dependency_overrides[get_current_user]
-    if get_current_active_user in app.dependency_overrides:
-        del app.dependency_overrides[get_current_active_user]
-
-
-@pytest.fixture
-def sample_song_data():
-    """Sample song data for testing."""
-    return {
-        "title": "Test Song",
-        "artist": "Test Artist",
-        "duration": 180,
-        "genre": "Rock"
-    }
-
-
-@pytest.fixture
-def sample_user_data():
-    """Sample user registration data."""
-    return {
-        "email": "newuser@example.com",
-        "username": "newuser",
-        "password": "testpassword123",
-        "full_name": "New User"
-    }
+        # Restore original
+        songs_module.UPLOAD_DIR = original_upload_dir
