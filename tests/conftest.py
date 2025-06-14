@@ -1,69 +1,126 @@
-import sys
-
 import pytest
-import tempfile
-import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from unittest.mock import patch
+import asyncio
+from httpx import AsyncClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+from fastapi.testclient import TestClient
 
-from app.database import Base
+from main import app
+from app.database import Base, get_db
+from app.auth import get_current_user, get_current_active_user
+from app.models import User
 
-# Global test configuration
-@pytest.fixture(scope="session", autouse=True)
-def setup_test_environment():
-    """Setup test environment and cleanup"""
-    # Create temp directory for test uploads
-    temp_dir = tempfile.mkdtemp()
+# Test database URL - using SQLite for simplicity
+SQLALCHEMY_DATABASE_URL = "sqlite:///./test.db"
 
-    # Patch the uploads directory
-    with patch.dict(os.environ, {"UPLOADS_DIR": temp_dir}):
-        yield
+engine = create_engine(
+    SQLALCHEMY_DATABASE_URL,
+    connect_args={"check_same_thread": False},
+    poolclass=StaticPool,
+)
+TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-    # Cleanup temp directory
-    import shutil
-    shutil.rmtree(temp_dir, ignore_errors=True)
+
+def override_get_db():
+    try:
+        db = TestingSessionLocal()
+        yield db
+    finally:
+        db.close()
+
+
+app.dependency_overrides[get_db] = override_get_db
+
+
+@pytest.fixture(scope="session")
+def event_loop():
+    """Create an instance of the default event loop for the test session."""
+    loop = asyncio.get_event_loop_policy().new_event_loop()
+    yield loop
+    loop.close()
+
+
+@pytest.fixture(scope="function")
+def db_session():
+    """Create a fresh database for each test."""
+    # Drop all tables first, then create them
+    Base.metadata.drop_all(bind=engine)
+    Base.metadata.create_all(bind=engine)
+
+    db = TestingSessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+        # Clean up after test
+        Base.metadata.drop_all(bind=engine)
 
 
 @pytest.fixture
-def mock_file_upload():
-    """Mock file upload operations"""
-    with patch('os.makedirs'), \
-            patch('builtins.open'), \
-            patch('os.path.exists', return_value=True):
-        yield
+def client():
+    """Test client for making requests."""
+    return TestClient(app)
 
 
-# Database markers for different test types
-pytest_markers = [
-    "unit: marks tests as unit tests (fast, no external dependencies)",
-    "integration: marks tests as integration tests (slower, with database)",
-    "auth: marks tests that require authentication",
-    "artist: marks tests that require artist privileges",
-    "file_upload: marks tests that involve file uploads"
-]
+@pytest.fixture
+async def async_client():
+    """Async test client for async operations."""
+    async with AsyncClient(app=app, base_url="http://test") as ac:
+        yield ac
 
 
-# Add custom pytest options
-def pytest_addoption(parser):
-    parser.addoption(
-        "--run-slow", action="store_true", default=False, help="run slow tests"
+@pytest.fixture
+def mock_user():
+    """Mock user for authentication tests."""
+    return User(
+        id=1,
+        email="test@example.com",
+        username="testuser",
+        is_active=True,
+        is_artist=False
     )
 
 
-def pytest_configure(config):
-    config.addinivalue_line("markers", "slow: mark test as slow to run")
-    for marker in pytest_markers:
-        config.addinivalue_line("markers", marker)
+@pytest.fixture
+def authenticated_client(client, mock_user):
+    """Client with mocked authentication."""
+
+    def mock_get_current_user():
+        return mock_user
+
+    def mock_get_current_active_user():
+        return mock_user
+
+    app.dependency_overrides[get_current_user] = mock_get_current_user
+    app.dependency_overrides[get_current_active_user] = mock_get_current_active_user
+
+    yield client
+
+    # Cleanup
+    if get_current_user in app.dependency_overrides:
+        del app.dependency_overrides[get_current_user]
+    if get_current_active_user in app.dependency_overrides:
+        del app.dependency_overrides[get_current_active_user]
 
 
-def pytest_collection_modifyitems(config, items):
-    if config.getoption("--run-slow"):
-        # Don't skip slow tests if --run-slow is given
-        return
-    skip_slow = pytest.mark.skip(reason="need --run-slow option to run")
-    for item in items:
-        if "slow" in item.keywords:
-            item.add_marker(skip_slow)
+@pytest.fixture
+def sample_song_data():
+    """Sample song data for testing."""
+    return {
+        "title": "Test Song",
+        "artist": "Test Artist",
+        "duration": 180,
+        "genre": "Rock"
+    }
+
+
+@pytest.fixture
+def sample_user_data():
+    """Sample user registration data."""
+    return {
+        "email": "newuser@example.com",
+        "username": "newuser",
+        "password": "testpassword123",
+        "full_name": "New User"
+    }
