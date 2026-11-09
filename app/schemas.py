@@ -1,6 +1,7 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from typing import List, Optional
 from datetime import datetime
+from enum import Enum
 from fastapi import UploadFile
 
 class FollowResponse(BaseModel):
@@ -164,3 +165,36 @@ class RefreshTokenRequest(BaseModel):
 
 class TokenData(BaseModel):
     username: Optional[str] = None 
+
+# Listening events (implicit feedback for recommendations)
+class ListeningEndReason(str, Enum):
+    completed = "completed"      # played to the end
+    skipped = "skipped"          # user moved to another track
+    interrupted = "interrupted"  # stopped, queue replaced, app closed
+
+
+class ListeningEventCreate(BaseModel):
+    song_id: int
+    started_at: datetime
+    played_ms: int = Field(ge=0, le=24 * 60 * 60 * 1000)
+    end_reason: ListeningEndReason
+    source: Optional[str] = Field(default=None, max_length=32)
+    source_id: Optional[int] = None
+
+
+class ListeningEventBatch(BaseModel):
+    events: List[ListeningEventCreate] = Field(min_length=1, max_length=200)
+
+
+class ListeningEventBatchResult(BaseModel):
+    accepted: int
+    rejected_song_ids: List[int] = []
+
+
+class ListeningEvent(ListeningEventCreate):
+    id: int
+    user_id: int
+    created_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True

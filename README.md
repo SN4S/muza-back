@@ -102,6 +102,10 @@ music-streaming-api/
 - `PUT /genres/{genre_id}` - Update genre
 - `DELETE /genres/{genre_id}` - Delete genre
 
+### Listening events (recommendation signals)
+- `POST /events/listening` - Record a batch of playback sessions (1–200 events). Each event: `song_id`, `started_at`, `played_ms`, `end_reason` (`completed` | `skipped` | `interrupted`), optional `source` / `source_id`. Events for deleted songs are dropped and returned in `rejected_song_ids`.
+- `GET /events/listening/me` - Current user's listening history, newest first
+
 ## Data Models
 
 ### User

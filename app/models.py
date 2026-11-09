@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, ForeignKey, Integer, String, Table, DateTime, Text
+from sqlalchemy import Boolean, Column, ForeignKey, Index, Integer, String, Table, DateTime, Text
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from .database import Base
@@ -132,3 +132,29 @@ class UserLikedAlbums(Base):
     user_id = Column(Integer, ForeignKey("users.id"), primary_key=True)
     album_id = Column(Integer, ForeignKey("albums.id"), primary_key=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+class ListeningEvent(Base):
+    """One playback session of a song by a user.
+
+    Implicit-feedback signal for the recommendation system: how long the
+    song was actually played and how the session ended (completed / skipped
+    / interrupted).
+    """
+    __tablename__ = "listening_events"
+    __table_args__ = (
+        Index("ix_listening_events_user_started", "user_id", "started_at"),
+        Index("ix_listening_events_song", "song_id"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    song_id = Column(Integer, ForeignKey("songs.id", ondelete="CASCADE"), nullable=False)
+    started_at = Column(DateTime(timezone=True), nullable=False)
+    played_ms = Column(Integer, nullable=False)
+    end_reason = Column(String(16), nullable=False)  # completed | skipped | interrupted
+    source = Column(String(32), nullable=True)       # playlist | album | search | ...
+    source_id = Column(Integer, nullable=True)       # id of playlist/album, if any
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    user = relationship("User")
+    song = relationship("Song")
